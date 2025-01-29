@@ -32,8 +32,8 @@ After the code runs, you’ll have:
 
 - Go to [Google Cloud Console](https://console.cloud.google.com/).
 - Create a new project (or pick an existing one).
-- Enable **Google Sheets API** and **Google Drive API**.
-- In “APIs & Services → Credentials,” create a **Service Account** with these APIs enabled.
+- Find through search **Google Sheets API** and **Google Drive API** and enable them.
+- In “APIs & Services → Credentials,” create a **Service Account** and write down it **email**.
 - Download the **JSON** credentials file, open it in a text editor, and copy the entire text.  
   This is your `GCP_CREDS_JSON`.
 
