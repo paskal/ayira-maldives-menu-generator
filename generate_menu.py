@@ -17,6 +17,7 @@ BASE_URL = f"https://{os.environ.get('GITHUB_REPOSITORY_OWNER', 'paskal')}.githu
 
 # Setup directories
 Path("generated/images").mkdir(parents=True, exist_ok=True)
+Path("build").mkdir(parents=True, exist_ok=True)
 
 # Authenticate with Google
 creds = service_account.Credentials.from_service_account_info(GCP_CREDS, scopes=[
@@ -205,10 +206,10 @@ def main():
 
     # Generate QR code
     qr = qrcode.make(BASE_URL)
-    qr.save("generated/menu-qr.png")
+    qr.save("build/menu-qr.png")
 
     # Create artifacts
-    with open("generated/menu-url.txt", "w") as f:
+    with open("build/menu-url.txt", "w") as f:
         f.write(BASE_URL)
 
 
