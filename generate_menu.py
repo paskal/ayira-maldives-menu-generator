@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 
-import qrcode
 import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -203,14 +202,6 @@ def main():
     html = generate_html(menu, logo_path if logo_url else "")
     with open('generated/index.html', 'w') as f:
         f.write(html)
-
-    # Generate QR code
-    qr = qrcode.make(BASE_URL)
-    qr.save("build/menu-qr.png")
-
-    # Create artifacts
-    with open("build/menu-url.txt", "w") as f:
-        f.write(BASE_URL)
 
 
 if __name__ == "__main__":

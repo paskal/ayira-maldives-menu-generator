@@ -32,22 +32,13 @@ jobs:
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           SHEET_NAME: ${{ secrets.SHEET_NAME }}
-          RESTAURANT_TITLE: ${{ secrets.RESTAURANT_TITLE }}
           GCP_CREDS_JSON: ${{ secrets.GCP_CREDS_JSON }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: python generate_menu.py
 
       - name: Upload generated site
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./generated
-
-      - name: Upload QR and URL
-        uses: actions/upload-artifact@v4
-        with:
-          name: menu-url-and-qr
-          path: build/menu-*
 
   deploy-pages:
     needs: deploy
@@ -59,3 +50,13 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Generate QR Code
+        run: |
+          qrencode -o build/menu-qr.png "${{ steps.deployment.outputs.page_url }}"
+
+      - name: Upload QR
+        uses: actions/upload-artifact@v4
+        with:
+          name: menu-qr
+          path: build/*
