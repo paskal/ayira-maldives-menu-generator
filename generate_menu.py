@@ -13,7 +13,7 @@ SPREADSHEET_ID = os.environ['SPREADSHEET_ID']
 SHEET_NAME = os.environ.get('SHEET_NAME', 'Sheet1')
 RESTAURANT_TITLE = os.environ.get('RESTAURANT_TITLE', 'Ayira Maldives Menu')
 GCP_CREDS = json.loads(os.environ['GCP_CREDS_JSON'])
-BASE_URL = f"https://{os.environ.get('GITHUB_REPOSITORY_OWNER', 'paskal')}.github.io/{os.environ.get('GITHUB_REPOSITORY', 'paskal/ayira-maldives-menu-generator').split('/')[1]}"
+BASE_URL = f"https://{os.environ.get('GITHUB_REPOSITORY_OWNER', 'paskal')}.github.io/{os.environ.get('GITHUB_REPOSITORY', 'paskal/ayira-maldives-menu-generator').split('/')[1]}/"
 
 # Setup directories
 Path("generated/images").mkdir(parents=True, exist_ok=True)
