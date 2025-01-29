@@ -37,10 +37,10 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./generated/
+          publish_dir: ./generated
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
           name: menu-assets
-          path: generated/{menu-url.txt,menu-qr.png}
+          path: generated/menu-url.txt,generated/menu-qr.png
