@@ -53,7 +53,7 @@ jobs:
 
       - name: Generate QR Code
         run: |
-          sudo apt-get install -y qrencode && qrencode -o build/menu-qr.png "${{ steps.deployment.outputs.page_url }}"
+          sudo apt-get install -y qrencode && mkdir -p build && qrencode -o build/menu-qr.png "${{ steps.deployment.outputs.page_url }}"
 
       - name: Upload QR
         uses: actions/upload-artifact@v4
