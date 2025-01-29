@@ -136,7 +136,7 @@ def generate_html(menu_data, logo_path):
         for item in items:
             html += f"""
         <div class="item">
-            <h3>{item['title']} <span class="price">${item['price']}</span></h3>
+            <h3>{item['title']} <span class="price">{item['price']}</span></h3>
             {f"<p>{item['description']}</p>" if item['description'] else ""}
             {f'<img src="{item["image"]}">' if item['image'] else ""}
         </div>"""
