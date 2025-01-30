@@ -41,7 +41,10 @@ HTML_TEMPLATE = string.Template(r"""<!DOCTYPE html>
   <title>${title}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    ::-webkit-scrollbar { width: 2px; }
+    /* Minimal custom styling: scrollbar only */
+    ::-webkit-scrollbar {
+      width: 2px;
+    }
     ::-webkit-scrollbar-thumb {
       background-color: #888;
       border-radius: 2px;
@@ -51,30 +54,50 @@ HTML_TEMPLATE = string.Template(r"""<!DOCTYPE html>
     }
   </style>
 </head>
-<body class="container mx-auto">
+<body class="container mx-auto bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
   <div>
+    <!-- Top row: Logo + Title on the left, Category & Search on the right -->
     <div class="grid grid-cols-3">
-      <div class="col-span-3 md:col-span-1 flex justify-center md:block">
-        <img id="logo_img" src="$logo_src" alt="${title} logo" class="h-24" />
+      <!-- Left column: Logo + Title (H1) below the logo -->
+      <div class="col-span-3 md:col-span-1 flex flex-col justify-center items-center md:items-start p-2">
+        <img
+          id="logo_img"
+          src="$logo_src"
+          alt="${title} logo"
+          class="h-24"
+        />
+        <!-- Menu title -->
+        <h1 class="text-xl md:text-2xl font-bold mt-2">
+          ${title}
+        </h1>
       </div>
+
+      <!-- Right column: Category & Search -->
       <div class="col-span-3 md:col-span-2 px-4 md:flex md:flex-row-reverse justify-center items-end">
+        <!-- Category Selector -->
         <div class="md:w-1/2 md:ml-4">
-          <label for="category" class="block text-xs font-medium leading-6 text-gray-700">Category</label>
+          <label for="category" class="block text-xs font-medium leading-6 text-gray-700 dark:text-gray-200">
+            Category
+          </label>
           <select
             id="category"
             name="category"
             onchange="setItems()"
-            class="block w-full rounded-md p-2 text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:border-indigo-700"
+            class="block w-full rounded-md p-2 text-gray-900 bg-gray-100 border border-gray-300
+                   dark:text-gray-100 dark:bg-gray-800 dark:border-gray-600
+                   focus:border-indigo-700"
           >
             <option selected value="">All</option>
             $categories
           </select>
         </div>
+
+        <!-- Search Box -->
         <div class="flex-1 mt-4 md:w-1/2">
           <div class="relative">
             <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
               <svg
-                class="w-4 h-4 text-gray-500"
+                class="w-4 h-4 text-gray-500 dark:text-gray-400"
                 aria-hidden="true"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
@@ -93,31 +116,36 @@ HTML_TEMPLATE = string.Template(r"""<!DOCTYPE html>
               type="search"
               id="search"
               onkeyup="setItems()"
-              class="block w-full p-2 pl-10 text-sm text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:border-indigo-700"
+              class="block w-full p-2 pl-10 text-sm text-gray-900 bg-gray-100 border border-gray-300 rounded-lg
+                     dark:text-gray-100 dark:bg-gray-800 dark:border-gray-600
+                     focus:border-indigo-700"
               placeholder="Search"
             />
           </div>
         </div>
       </div>
     </div>
-    <div class="my-2 p-2 bg-gray-50"></div>
-    <div class="divider divide-y-2 px-4 pb-10" id="menu_wrapper">
-      <!-- All categories + items go here -->
-      $menu_items
+
+    <!-- Just a spacer, no background color -->
+    <div class="my-2 p-2"></div>
+
+    <!-- Container that draws subtle lines between categories -->
+    <div class="divider divide-y-2 divide-gray-300 dark:divide-gray-600 px-4 pb-10" id="menu_wrapper">
+       $menu_items
     </div>
   </div>
+
   <script>
-    // Toggle each item, then hide entire category blocks if all items are hidden
+    // Filter items by search text + selected category
     function setItems() {
       const searchText = document.getElementById("search").value.toLowerCase();
       const selectedCategory = document.getElementById("category").value;
       const items = document.querySelectorAll(".menu-item");
 
-      // 1. Show/Hide each item
+      // Show/hide each item
       items.forEach(item => {
         const category = item.getAttribute("data-category");
         const name = item.querySelector(".item-title").innerText.toLowerCase();
-
         if (
           (selectedCategory === "" || category === selectedCategory) &&
           name.includes(searchText)
@@ -128,7 +156,7 @@ HTML_TEMPLATE = string.Template(r"""<!DOCTYPE html>
         }
       });
 
-      // 2. For each category-block, hide if no item inside is visible
+      // Then hide entire category-block if no items inside are visible
       const blocks = document.querySelectorAll(".category-block");
       blocks.forEach(block => {
         const blockItems = block.querySelectorAll(".menu-item");
@@ -261,13 +289,12 @@ def generate_html(menu_data: MenuData, title: str, logo_src: typing.Optional[str
     item_id_counter = 0
 
     for category, items in menu_data.items():
-        # Open a container (e.g. <div> or <li>) for this entire category
+        # Open a container for this entire category
         menu_items_html += f'''
           <div class="category-block col-span-12 mt-4" data-category-group="{category}">
-            <h3 class="text-lg font-medium leading-6 text-gray-900 mb-2">{category}</h3>
+            <h3 class="text-lg font-medium leading-6 text-gray-900 dark:text-gray-100 mb-2">{category}</h3>
             <ul class="grid md:grid-cols-3 gap-4">
         '''
-
         # Add each item
         for item in items:
             item_id_counter += 1
@@ -280,7 +307,7 @@ def generate_html(menu_data: MenuData, title: str, logo_src: typing.Optional[str
                 image_html = f'''
                   <div>
                     <img
-                      class="h-16 md:h-20 w-16 md:w-20 bg-gray-50 rounded-lg"
+                      class="h-16 md:h-20 w-16 md:w-20 bg-gray-50 rounded-lg dark:bg-gray-800"
                       src="{item['image_src']}"
                       alt="{title_text}"
                     />
@@ -306,10 +333,10 @@ def generate_html(menu_data: MenuData, title: str, logo_src: typing.Optional[str
 
             # Each item has class="menu-item" and data-category
             menu_items_html += f'''
-            <li class="menu-item border border-gray-200 rounded-md p-2 flex justify-between gap-x-6 py-3" data-category="{category}">
+            <li class="menu-item border border-gray-200 rounded-md p-2 flex justify-between gap-x-6 py-3 dark:border-gray-700" data-category="{category}">
               <div class="flex-1">
-                <p class="item-title text-base font-semibold leading-6 text-gray-800">{title_text}</p>
-                <p class="mt-1 truncate text-sm leading-5 text-gray-500">{price_text}</p>
+                <p class="item-title text-base font-semibold leading-6">{title_text}</p>
+                <p class="mt-1 truncate text-sm leading-5 text-gray-500 dark:text-gray-400">{price_text}</p>
                 {desc_html}
               </div>
               {image_html}
