@@ -10,25 +10,8 @@ import google.oauth2.service_account
 import googleapiclient.discovery
 
 
-class CellFormat(typing.TypedDict, total=False):
-    backgroundColor: typing.Dict[str, float]
-    backgroundImage: typing.Dict[str, str]
-    padding: typing.Dict[str, int]
-    horizontalAlignment: str
-    verticalAlignment: str
-    textFormat: typing.Dict[str, typing.Any]
-
-
-class CellValue(typing.TypedDict, total=False):
-    stringValue: str
-    numberValue: float
-
-
 class Cell(typing.TypedDict, total=False):
-    userEnteredValue: CellValue
-    effectiveValue: CellValue
     formattedValue: str
-    effectiveFormat: CellFormat
 
 
 class MenuItem(typing.TypedDict):
@@ -38,9 +21,12 @@ class MenuItem(typing.TypedDict):
     image: str
 
 
+class RowData(typing.TypedDict):
+    values: typing.List[Cell]
+
+
 MenuData = typing.Dict[str, typing.List[MenuItem]]
 ImageMap = typing.Dict[typing.Tuple[int, int], str]
-SheetData = typing.Dict[str, typing.Any]
 
 # Configuration
 SPREADSHEET_ID = os.environ['SPREADSHEET_ID']
@@ -122,15 +108,7 @@ def ensure_directories() -> None:
 
 def get_cell_value(cell: Cell) -> str:
     """Extract the string value from a cell."""
-    if 'formattedValue' in cell:
-        return cell['formattedValue']
-    if 'effectiveValue' in cell:
-        value = cell['effectiveValue']
-        if 'stringValue' in value:
-            return value['stringValue']
-        if 'numberValue' in value:
-            return str(value['numberValue'])
-    return ''
+    return cell.get('formattedValue')
 
 
 def get_services() -> typing.Tuple[googleapiclient.discovery.Resource, googleapiclient.discovery.Resource]:
@@ -138,7 +116,7 @@ def get_services() -> typing.Tuple[googleapiclient.discovery.Resource, googleapi
     creds = google.oauth2.service_account.Credentials.from_service_account_info(
         GCP_CREDS,
         scopes=[
-            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/spreadsheets.readonly',
             'https://www.googleapis.com/auth/drive.readonly'
         ]
     )
@@ -147,13 +125,15 @@ def get_services() -> typing.Tuple[googleapiclient.discovery.Resource, googleapi
     return sheets, drive
 
 
-def get_sheet_data(sheets_service: googleapiclient.discovery.Resource) -> typing.Tuple[str, SheetData]:
-    """Fetch data and embedded images from Google Sheets."""
+def get_sheet_data(sheets_service: googleapiclient.discovery.Resource) -> typing.Tuple[str, typing.List[RowData]]:
+    """Fetch product data and menu title from Google Sheets."""
     # Get restaurant title and logo
     sheet_data = sheets_service.spreadsheets().get(
         spreadsheetId=SPREADSHEET_ID,
-        ranges=[f"{SHEET_NAME}!A2:E", f"{SHEET_NAME}!G2:H2"],  # Include logo and title cells
-        includeGridData=True
+        ranges=[f"{SHEET_NAME}!A2:D", f"{SHEET_NAME}!G2:H2"],
+        # Up to description, as photos are retrieved elsewhere, and separately title
+        includeGridData=True,
+        fields="sheets.data.rowData.values.formattedValue",
     ).execute()
 
     # Extract title from H2
@@ -166,31 +146,15 @@ def get_sheet_data(sheets_service: googleapiclient.discovery.Resource) -> typing
                         title_data = row['values'][-1]  # Last cell should be H2
                         break
 
-    restaurant_title = get_cell_value(title_data) if title_data else "Restaurant Menu"
+    menu_title = get_cell_value(title_data) if title_data else "Restaurant Menu"
 
-    return restaurant_title, sheet_data
+    # return values for first interval as product data
+    return menu_title, sheet_data['sheets'][0]['data'][0].get('rowData', [])
 
 
-def extract_image_ids(sheet_data: SheetData) -> ImageMap:
-    """Extract image IDs from cell data."""
-    image_map: ImageMap = {}
-
-    if 'sheets' in sheet_data:
-        for sheet in sheet_data['sheets']:
-            for data in sheet['data']:
-                if 'rowData' in data:
-                    for row_idx, row in enumerate(data['rowData'], start=2):  # start=2 because we begin from A2
-                        if 'values' in row:
-                            for col_idx, cell in enumerate(row['values']):
-                                if row_idx == 2 and cell and not cell.get('userEnteredValue',{}).get('stringValue') and not cell.get('userEnteredValue',{}).get('numberValue'):  # G2 is the logo cell
-                                    print(json.dumps(cell))
-                                if cell.get('effectiveFormat', {}).get('backgroundImage', {}).get('sourceUrl'):
-                                    image_url = cell['effectiveFormat']['backgroundImage']['sourceUrl']
-                                    if 'id=' in image_url:
-                                        image_id = image_url.split('id=')[1].split('&')[0]
-                                        image_map[(row_idx, col_idx)] = image_id
-
-    return image_map
+def extract_image_ids(sheets_service: googleapiclient.discovery.Resource) -> ImageMap:
+    """Extract images from a Google Spreadsheet."""
+    return {}
 
 
 def download_drive_image(drive_service: googleapiclient.discovery.Resource, file_id: str, filename: str) -> bool:
@@ -254,7 +218,7 @@ def get_logo_path(image_map: ImageMap, drive_service: googleapiclient.discovery.
     return None
 
 
-def generate_html(menu_data: MenuData, restaurant_title: str, logo_path: typing.Optional[str] = None) -> str:
+def generate_html(menu_data: MenuData, menu_title: str, logo_path: typing.Optional[str] = None) -> str:
     """Generate HTML using templates."""
     # Process categories
     categories_html: typing.List[str] = []
@@ -285,7 +249,7 @@ def generate_html(menu_data: MenuData, restaurant_title: str, logo_path: typing.
 
     # Generate final HTML
     return HTML_TEMPLATE.substitute(
-        title=restaurant_title,
+        title=menu_title,
         logo_img=logo_html,
         categories=''.join(categories_html)
     )
@@ -299,22 +263,19 @@ def main() -> None:
     sheets_service, drive_service = get_services()
 
     # Get sheet data with both menu items and logo/title area
-    restaurant_title, sheet_data = get_sheet_data(sheets_service)
+    menu_title, products_data = get_sheet_data(sheets_service)
 
     # Extract image IDs from sheet data (including logo)
-    image_map = extract_image_ids(sheet_data)
+    image_map = extract_image_ids(sheets_service)
 
     # Get logo path
     logo_path = get_logo_path(image_map, drive_service)
 
-    # Get menu values from the first range (A2:E)
-    values = sheet_data['sheets'][0]['data'][0].get('rowData', [])
-
     # Process menu items
-    menu = process_menu_items(values, image_map, drive_service)
+    menu = process_menu_items(products_data, image_map, drive_service)
 
     # Generate and save HTML
-    html = generate_html(menu, restaurant_title, logo_path)
+    html = generate_html(menu, menu_title, logo_path)
     with open('generated/index.html', 'w', encoding='utf-8') as f:
         f.write(html)
 
