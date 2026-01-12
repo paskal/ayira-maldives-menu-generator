@@ -1,13 +1,19 @@
+import base64
 import html
+import io
 import json
 import logging
 import os
+import re
 import string
 import sys
 import typing
+import xml.etree.ElementTree as ET
+import zipfile
 
 import google.oauth2.service_account
 import googleapiclient.discovery
+from googleapiclient.http import MediaIoBaseDownload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,8 +35,18 @@ def load_default_logo() -> str:
         return ""
 
 
+class CellImage(typing.TypedDict, total=False):
+    sourceUri: str
+    contentUri: str
+
+
+class CellValue(typing.TypedDict, total=False):
+    image: CellImage
+
+
 class Cell(typing.TypedDict, total=False):
     formattedValue: str
+    userEnteredValue: CellValue
 
 
 class MenuItem(typing.TypedDict):
@@ -85,46 +101,143 @@ def get_cell_value(cell: Cell) -> str:
     return cell.get('formattedValue', '')
 
 
-def get_services(gcp_creds: dict[str, typing.Any]) -> googleapiclient.discovery.Resource:
-    """Initialize Google Sheets service."""
+def get_services(
+    gcp_creds: dict[str, typing.Any],
+) -> tuple[googleapiclient.discovery.Resource, googleapiclient.discovery.Resource]:
+    """Initialize Google Sheets and Drive services."""
     creds = google.oauth2.service_account.Credentials.from_service_account_info(
         gcp_creds,
-        scopes=['https://www.googleapis.com/auth/spreadsheets.readonly'],
+        scopes=[
+            'https://www.googleapis.com/auth/spreadsheets.readonly',
+            'https://www.googleapis.com/auth/drive.readonly',
+        ],
     )
-    return googleapiclient.discovery.build('sheets', 'v4', credentials=creds)
+    sheets = googleapiclient.discovery.build('sheets', 'v4', credentials=creds)
+    drive = googleapiclient.discovery.build('drive', 'v3', credentials=creds)
+    return sheets, drive
+
+
+def extract_images_from_xlsx(
+    drive_service: googleapiclient.discovery.Resource,
+    spreadsheet_id: str,
+) -> ImageMap:
+    """Download spreadsheet as XLSX and extract embedded images with positions."""
+    request = drive_service.files().export_media(
+        fileId=spreadsheet_id,
+        mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    fh.seek(0)
+    image_map: ImageMap = {}
+
+    with zipfile.ZipFile(fh) as zf:
+        # Check if drawings exist
+        if 'xl/drawings/drawing1.xml' not in zf.namelist():
+            return image_map
+
+        # Parse drawing relationships to map rIds to image files
+        rid_to_image: dict[str, str] = {}
+        if 'xl/drawings/_rels/drawing1.xml.rels' in zf.namelist():
+            with zf.open('xl/drawings/_rels/drawing1.xml.rels') as f:
+                rels_tree = ET.parse(f)
+                for rel in rels_tree.iter():
+                    if rel.tag.endswith('Relationship'):
+                        rid = rel.get('Id', '')
+                        target = rel.get('Target', '')
+                        if 'image' in target.lower():
+                            image_file = target.replace('../', 'xl/')
+                            rid_to_image[rid] = image_file
+
+        # Parse drawing positions
+        ns = {
+            'xdr': 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing',
+            'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+            'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+        }
+
+        with zf.open('xl/drawings/drawing1.xml') as f:
+            drawing_tree = ET.parse(f)
+            root = drawing_tree.getroot()
+
+            for anchor in root.findall('.//xdr:oneCellAnchor', ns):
+                from_elem = anchor.find('xdr:from', ns)
+                if from_elem is None:
+                    continue
+
+                col_elem = from_elem.find('xdr:col', ns)
+                row_elem = from_elem.find('xdr:row', ns)
+                if col_elem is None or row_elem is None:
+                    continue
+
+                col = int(col_elem.text or '0')
+                row = int(row_elem.text or '0')
+
+                # Find the embedded image reference
+                blip = anchor.find('.//a:blip', ns)
+                if blip is not None:
+                    rid = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed', '')
+                    if rid and rid in rid_to_image:
+                        image_file = rid_to_image[rid]
+                        if image_file in zf.namelist():
+                            with zf.open(image_file) as img_f:
+                                img_data = img_f.read()
+                                ext = image_file.rsplit('.', 1)[-1].lower()
+                                mime = {'jpg': 'jpeg', 'jpeg': 'jpeg', 'png': 'png', 'gif': 'gif'}.get(ext, 'jpeg')
+                                b64 = base64.b64encode(img_data).decode('ascii')
+                                image_map[(row, col)] = f"data:image/{mime};base64,{b64}"
+
+    return image_map
+
+
+def get_cell_image(cell: Cell) -> str:
+    """Extract image URL from a cell if present."""
+    user_value = cell.get('userEnteredValue', {})
+    image_data = user_value.get('image', {})
+    return image_data.get('contentUri', '') or image_data.get('sourceUri', '')
 
 
 def get_sheet_data(
     sheets_service: googleapiclient.discovery.Resource,
     spreadsheet_id: str,
     sheet_name: str,
-) -> tuple[str, list[RowData]]:
-    """Fetch product data and menu title from Google Sheets."""
+) -> tuple[str, list[RowData], str]:
+    """Fetch product data, menu title, and logo from Google Sheets."""
     sheet_data = sheets_service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
-        ranges=[f"{sheet_name}!A2:D", f"{sheet_name}!G2:H2"],
+        ranges=[f"{sheet_name}!A2:E", f"{sheet_name}!G2:H2"],
         includeGridData=True,
-        fields="sheets.data.rowData.values.formattedValue",
+        fields="sheets.data.rowData.values(formattedValue,userEnteredValue)",
     ).execute()
 
     title_data = None
-    for sheet in sheet_data['sheets']:
-        for data in sheet['data']:
-            if 'rowData' in data and data['rowData']:
-                for row in data['rowData']:
-                    if 'values' in row and len(row['values']) > 1:
-                        title_data = row['values'][-1]
-                        break
+    logo_cell = None
+    if len(sheet_data['sheets'][0]['data']) > 1:
+        title_range = sheet_data['sheets'][0]['data'][1]
+        if 'rowData' in title_range and title_range['rowData']:
+            row = title_range['rowData'][0]
+            if 'values' in row:
+                cells = row['values']
+                if len(cells) > 0:
+                    logo_cell = cells[0]
+                if len(cells) > 1:
+                    title_data = cells[1]
 
     menu_title = get_cell_value(title_data) if title_data else "Restaurant Menu"
-    return menu_title, sheet_data['sheets'][0]['data'][0].get('rowData', [])
+    logo_src = get_cell_image(logo_cell) if logo_cell else ""
+
+    return menu_title, sheet_data['sheets'][0]['data'][0].get('rowData', []), logo_src
 
 
 def process_menu_items(values: list[RowData], image_map: ImageMap) -> MenuData:
-    """Process menu items and handle embedded images."""
+    """Process menu items and map embedded images."""
     menu: MenuData = {}
 
-    for i, row in enumerate(values, start=2):
+    for row_idx, row in enumerate(values):
         if 'values' not in row or len(row['values']) < 3:
             continue
 
@@ -134,8 +247,9 @@ def process_menu_items(values: list[RowData], image_map: ImageMap) -> MenuData:
         category = get_cell_value(cells[2])
         description = get_cell_value(cells[3]) if len(cells) > 3 else ""
 
-        # image embedding not yet implemented
-        image_src = ""
+        # Image map uses (row, col) where row is 1-indexed from XLSX (row 1 = sheet row 2)
+        # Data starts at row 2, so row_idx 0 corresponds to XLSX row 1
+        image_src = image_map.get((row_idx + 1, 4), "")
 
         if category not in menu:
             menu[category] = []
@@ -150,12 +264,6 @@ def process_menu_items(values: list[RowData], image_map: ImageMap) -> MenuData:
     return menu
 
 
-def get_logo_src(image_map: ImageMap) -> str:
-    """Get logo path if it exists in G2 (index 6), otherwise return default."""
-    # image embedding not yet implemented
-    return load_default_logo()
-
-
 def generate_html(
     template: string.Template,
     menu_data: MenuData,
@@ -164,8 +272,11 @@ def generate_html(
 ) -> str:
     """Generate HTML from menu data with proper escaping."""
     escaped_title = html.escape(title)
-    categories_html = ''.join(
-        f'<option value="{html.escape(category)}">{html.escape(category)}</option>'
+    # Generate "All" button plus category buttons (all same style, no active state)
+    btn_class = "px-3 py-1 text-sm rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-indigo-600 hover:text-white"
+    categories_html = f'''<button onclick="selectCategory('')" class="{btn_class}">All</button>'''
+    categories_html += ''.join(
+        f'''<button onclick="selectCategory('{html.escape(category)}')" class="{btn_class}">{html.escape(category)}</button>'''
         for category in menu_data.keys()
     )
 
@@ -193,7 +304,7 @@ def generate_html(
                 image_html = f'''
                   <div>
                     <img
-                      class="h-16 md:h-20 w-16 md:w-20 bg-gray-50 rounded-lg dark:bg-gray-800"
+                      class="h-48 md:h-64 w-48 md:w-64 bg-gray-50 rounded-lg dark:bg-gray-800 object-cover"
                       src="{escaped_image_src}"
                       alt="{title_text}"
                     />
@@ -262,14 +373,17 @@ def main() -> int:
 
     try:
         ensure_directories()
-        sheets_service = get_services(gcp_creds)
-        logger.info("Google Sheets service initialized")
+        sheets_service, drive_service = get_services(gcp_creds)
+        logger.info("Google services initialized")
 
-        menu_title, products_data = get_sheet_data(sheets_service, spreadsheet_id, sheet_name)
+        image_map = extract_images_from_xlsx(drive_service, spreadsheet_id)
+        logger.info(f"Extracted {len(image_map)} images from spreadsheet")
+
+        menu_title, products_data, _ = get_sheet_data(sheets_service, spreadsheet_id, sheet_name)
         logger.info(f"Fetched menu data: '{menu_title}' with {len(products_data)} rows")
 
-        image_map: ImageMap = {}
-        logo_src = get_logo_src(image_map)
+        # Logo is at G2 which is (row=1, col=6) in 0-indexed XLSX coordinates
+        logo_src = image_map.get((1, 6), "") or load_default_logo()
 
         menu = process_menu_items(products_data, image_map)
         total_items = sum(len(items) for items in menu.values())

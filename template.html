@@ -20,71 +20,53 @@
 </head>
 <body class="container mx-auto bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
   <div>
-    <div class="grid grid-cols-3">
-      <div class="col-span-3 md:col-span-1 flex flex-col justify-center items-center md:items-start p-2">
-        <img
-          id="logo_img"
-          src="$logo_src"
-          alt="${title} logo"
-          class="h-24"
-        />
-        <h1 class="text-xl md:text-2xl font-bold mt-2">
-          ${title}
-        </h1>
-      </div>
-
-      <div class="col-span-3 md:col-span-2 px-4 md:flex md:flex-row-reverse justify-center items-end">
-        <div class="md:w-1/2 md:ml-4">
-          <label for="category" class="block text-xs font-medium leading-6 text-gray-700 dark:text-gray-200">
-            Category
-          </label>
-          <select
-            id="category"
-            name="category"
-            onchange="setItems()"
-            class="block w-full rounded-md p-2 text-gray-900 bg-gray-100 border border-gray-300
+    <div class="flex flex-col items-center p-4">
+      <img
+        id="logo_img"
+        src="$logo_src"
+        alt="${title} logo"
+        class="h-24"
+      />
+      <h1 class="text-xl md:text-2xl font-bold mt-2 text-center">
+        ${title}
+      </h1>
+      <div class="w-full max-w-md mt-4">
+        <div class="relative">
+          <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+            <svg
+              class="w-4 h-4 text-gray-500 dark:text-gray-400"
+              aria-hidden="true"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 20 20"
+            >
+              <path
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"
+              />
+            </svg>
+          </div>
+          <input
+            type="search"
+            id="search"
+            onkeyup="filterBySearch()"
+            class="block w-full p-2 pl-10 text-sm text-gray-900 bg-gray-100 border border-gray-300 rounded-lg
                    dark:text-gray-100 dark:bg-gray-800 dark:border-gray-600
                    focus:border-indigo-700"
-          >
-            <option selected value="">All</option>
-            $categories
-          </select>
-        </div>
-
-        <div class="flex-1 mt-4 md:w-1/2">
-          <div class="relative">
-            <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-              <svg
-                class="w-4 h-4 text-gray-500 dark:text-gray-400"
-                aria-hidden="true"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 20 20"
-              >
-                <path
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"
-                />
-              </svg>
-            </div>
-            <input
-              type="search"
-              id="search"
-              onkeyup="setItems()"
-              class="block w-full p-2 pl-10 text-sm text-gray-900 bg-gray-100 border border-gray-300 rounded-lg
-                     dark:text-gray-100 dark:bg-gray-800 dark:border-gray-600
-                     focus:border-indigo-700"
-              placeholder="Search"
-            />
-          </div>
+            placeholder="Search"
+          />
         </div>
       </div>
     </div>
 
-    <div class="my-2 p-2"></div>
+    <div class="my-2 p-2">
+      <div id="category-buttons" class="flex flex-wrap gap-2 justify-center">
+        $categories
+      </div>
+    </div>
 
     <div class="divider divide-y-2 divide-gray-300 dark:divide-gray-600 px-4 pb-10" id="menu_wrapper">
        $menu_items
@@ -92,22 +74,24 @@
   </div>
 
   <script>
-    function setItems() {
+    function selectCategory(category) {
+      if (category === "") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } else {
+        const block = document.querySelector(`[data-category-group="${category}"]`);
+        if (block) {
+          block.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
+    }
+
+    function filterBySearch() {
       const searchText = document.getElementById("search").value.toLowerCase();
-      const selectedCategory = document.getElementById("category").value;
       const items = document.querySelectorAll(".menu-item");
 
       items.forEach(item => {
-        const category = item.getAttribute("data-category");
         const name = item.querySelector(".item-title").innerText.toLowerCase();
-        if (
-          (selectedCategory === "" || category === selectedCategory) &&
-          name.includes(searchText)
-        ) {
-          item.style.display = "block";
-        } else {
-          item.style.display = "none";
-        }
+        item.style.display = name.includes(searchText) ? "block" : "none";
       });
 
       const blocks = document.querySelectorAll(".category-block");

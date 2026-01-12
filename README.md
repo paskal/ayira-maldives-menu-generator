@@ -51,11 +51,10 @@ After the code runs, you’ll have:
 
 4. **Add GitHub Secrets**
 
-- In your forked repository, click “Settings” → “Secrets and variables” → “Actions.”
-- Click “New repository secret” and add the following (exact name in uppercase):
-    - `SPREADSHEET_ID` = your sheet’s ID
+- In your forked repository, click "Settings" → "Secrets and variables" → "Actions."
+- Click "New repository secret" and add the following (exact name in uppercase):
+    - `SPREADSHEET_ID` = your sheet's ID
     - `SHEET_NAME` = the sheet tab name if you want to use something other than the first tab, e.g. `Sheet1`
-    - `RESTAURANT_TITLE` = e.g. `Ayira Maldives Menu` (optional; defaults to the same if not set)
     - `GCP_CREDS_JSON` = the entire text from your service account JSON file
 
 5. **That’s it!**
