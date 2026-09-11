@@ -35,18 +35,8 @@ def load_default_logo() -> str:
         return ""
 
 
-class CellImage(typing.TypedDict, total=False):
-    sourceUri: str
-    contentUri: str
-
-
-class CellValue(typing.TypedDict, total=False):
-    image: CellImage
-
-
 class Cell(typing.TypedDict, total=False):
     formattedValue: str
-    userEnteredValue: CellValue
 
 
 class MenuItem(typing.TypedDict):
@@ -194,43 +184,30 @@ def extract_images_from_xlsx(
     return image_map
 
 
-def get_cell_image(cell: Cell) -> str:
-    """Extract image URL from a cell if present."""
-    user_value = cell.get('userEnteredValue', {})
-    image_data = user_value.get('image', {})
-    return image_data.get('contentUri', '') or image_data.get('sourceUri', '')
-
-
 def get_sheet_data(
     sheets_service: googleapiclient.discovery.Resource,
     spreadsheet_id: str,
     sheet_name: str,
-) -> tuple[str, list[RowData], str]:
-    """Fetch product data, menu title, and logo from Google Sheets."""
+) -> tuple[str, list[RowData]]:
+    """Fetch product data and menu title from Google Sheets."""
     sheet_data = sheets_service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
-        ranges=[f"{sheet_name}!A2:E", f"{sheet_name}!G2:H2"],
+        ranges=[f"{sheet_name}!A2:E", f"{sheet_name}!H2"],
         includeGridData=True,
-        fields="sheets.data.rowData.values(formattedValue,userEnteredValue)",
+        fields="sheets.data.rowData.values(formattedValue)",
     ).execute()
 
     title_data = None
-    logo_cell = None
     if len(sheet_data['sheets'][0]['data']) > 1:
         title_range = sheet_data['sheets'][0]['data'][1]
         if 'rowData' in title_range and title_range['rowData']:
             row = title_range['rowData'][0]
-            if 'values' in row:
-                cells = row['values']
-                if len(cells) > 0:
-                    logo_cell = cells[0]
-                if len(cells) > 1:
-                    title_data = cells[1]
+            if 'values' in row and row['values']:
+                title_data = row['values'][0]
 
     menu_title = get_cell_value(title_data) if title_data else "Restaurant Menu"
-    logo_src = get_cell_image(logo_cell) if logo_cell else ""
 
-    return menu_title, sheet_data['sheets'][0]['data'][0].get('rowData', []), logo_src
+    return menu_title, sheet_data['sheets'][0]['data'][0].get('rowData', [])
 
 
 def process_menu_items(values: list[RowData], image_map: ImageMap) -> MenuData:
@@ -379,7 +356,7 @@ def main() -> int:
         image_map = extract_images_from_xlsx(drive_service, spreadsheet_id)
         logger.info(f"Extracted {len(image_map)} images from spreadsheet")
 
-        menu_title, products_data, _ = get_sheet_data(sheets_service, spreadsheet_id, sheet_name)
+        menu_title, products_data = get_sheet_data(sheets_service, spreadsheet_id, sheet_name)
         logger.info(f"Fetched menu data: '{menu_title}' with {len(products_data)} rows")
 
         # Logo is at G2 which is (row=1, col=6) in 0-indexed XLSX coordinates
