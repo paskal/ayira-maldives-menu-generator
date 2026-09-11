@@ -91,7 +91,7 @@
 
       items.forEach(item => {
         const name = item.querySelector(".item-title").innerText.toLowerCase();
-        item.style.display = name.includes(searchText) ? "block" : "none";
+        item.style.display = name.includes(searchText) ? "" : "none";
       });
 
       const blocks = document.querySelectorAll(".category-block");
