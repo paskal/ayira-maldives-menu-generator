@@ -78,7 +78,7 @@
       if (category === "") {
         window.scrollTo({ top: 0, behavior: "smooth" });
       } else {
-        const block = document.querySelector(`[data-category-group="${category}"]`);
+        const block = document.getElementById("cat-" + category);
         if (block) {
           block.scrollIntoView({ behavior: "smooth", block: "start" });
         }

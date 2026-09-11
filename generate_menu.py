@@ -276,17 +276,17 @@ def generate_html(
     btn_class = "px-3 py-1 text-sm rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-indigo-600 hover:text-white"
     categories_html = f'''<button onclick="selectCategory('')" class="{btn_class}">All</button>'''
     categories_html += ''.join(
-        f'''<button onclick="selectCategory('{html.escape(category)}')" class="{btn_class}">{html.escape(category)}</button>'''
-        for category in menu_data.keys()
+        f'''<button onclick="selectCategory({index})" class="{btn_class}">{html.escape(category)}</button>'''
+        for index, category in enumerate(menu_data)
     )
 
     menu_items_html = ''
     item_id_counter = 0
 
-    for category, items in menu_data.items():
+    for index, (category, items) in enumerate(menu_data.items()):
         escaped_category = html.escape(category)
         menu_items_html += f'''
-          <div class="category-block col-span-12 mt-4" data-category-group="{escaped_category}">
+          <div id="cat-{index}" class="category-block col-span-12 mt-4">
             <h3 class="text-lg font-medium leading-6 text-gray-900 dark:text-gray-100 mb-2">{escaped_category}</h3>
             <ul class="grid md:grid-cols-3 gap-4">
         '''
@@ -328,7 +328,7 @@ def generate_html(
             '''
 
             menu_items_html += f'''
-            <li class="menu-item border border-gray-200 rounded-md p-2 flex justify-between gap-x-6 py-3 dark:border-gray-700" data-category="{escaped_category}">
+            <li class="menu-item border border-gray-200 rounded-md p-2 flex justify-between gap-x-6 py-3 dark:border-gray-700">
               <div class="flex-1">
                 <p class="item-title text-base font-semibold leading-6">{title_text}</p>
                 <p class="mt-1 truncate text-sm leading-5 text-gray-500 dark:text-gray-400">{price_text}</p>
