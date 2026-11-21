@@ -4,7 +4,7 @@ import io
 import json
 import logging
 import os
-import re
+import posixpath
 import string
 import sys
 import typing
@@ -25,12 +25,12 @@ DEFAULT_LOGO_PATH = os.path.join(SCRIPT_DIR, 'default_logo.txt')
 def load_default_logo() -> str:
     """Load default logo from file."""
     try:
-        with open(DEFAULT_LOGO_PATH, 'r', encoding='utf-8') as f:
+        with open(DEFAULT_LOGO_PATH, encoding='utf-8') as f:
             return f.read().strip()
     except FileNotFoundError:
         logger.warning("Default logo file not found, using empty logo")
         return ""
-    except IOError as e:
+    except OSError as e:
         logger.warning(f"Failed to read default logo: {e}")
         return ""
 
@@ -60,7 +60,9 @@ def get_config() -> tuple[str, str, dict[str, typing.Any]]:
     if not spreadsheet_id:
         raise ValueError("SPREADSHEET_ID environment variable is required")
 
-    sheet_name = os.environ.get('SHEET_NAME', 'Sheet1')
+    # An empty name selects the first tab. GitHub Actions passes an unset
+    # secret as an empty string, so empty and missing mean the same.
+    sheet_name = os.environ.get('SHEET_NAME', '').strip()
 
     gcp_creds_json = os.environ.get('GCP_CREDS_JSON')
     if not gcp_creds_json:
@@ -77,7 +79,7 @@ def get_config() -> tuple[str, str, dict[str, typing.Any]]:
 def load_template() -> string.Template:
     """Load HTML template from file."""
     template_path = os.path.join(SCRIPT_DIR, 'template.html')
-    with open(template_path, 'r', encoding='utf-8') as f:
+    with open(template_path, encoding='utf-8') as f:
         return string.Template(f.read())
 
 
@@ -107,11 +109,11 @@ def get_services(
     return sheets, drive
 
 
-def extract_images_from_xlsx(
+def download_xlsx(
     drive_service: googleapiclient.discovery.Resource,
     spreadsheet_id: str,
-) -> ImageMap:
-    """Download spreadsheet as XLSX and extract embedded images with positions."""
+) -> bytes:
+    """Download the spreadsheet as XLSX."""
     request = drive_service.files().export_media(
         fileId=spreadsheet_id,
         mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -121,93 +123,132 @@ def extract_images_from_xlsx(
     done = False
     while not done:
         _, done = downloader.next_chunk()
+    return fh.getvalue()
 
-    fh.seek(0)
+
+XLSX_NS = {
+    'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+    'xdr': 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing',
+    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+}
+REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+IMAGE_MIME = {'jpg': 'jpeg', 'jpeg': 'jpeg', 'png': 'png', 'gif': 'gif', 'webp': 'webp'}
+
+
+def read_rels(zf: zipfile.ZipFile, part: str) -> dict[str, tuple[str, str]]:
+    """Map relationship ids of an XLSX part to (type, resolved part path)."""
+    rels_path = posixpath.join(posixpath.dirname(part), '_rels', posixpath.basename(part) + '.rels')
+    if rels_path not in zf.namelist():
+        return {}
+    with zf.open(rels_path) as f:
+        root = ET.parse(f).getroot()
+    rels: dict[str, tuple[str, str]] = {}
+    for rel in root.findall(f'{{{PKG_REL_NS}}}Relationship'):
+        target = rel.get('Target', '')
+        if target.startswith('/'):
+            resolved = target.lstrip('/')
+        else:
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(part), target))
+        rels[rel.get('Id', '')] = (rel.get('Type', ''), resolved)
+    return rels
+
+
+def find_sheet_part(zf: zipfile.ZipFile, sheet_title: str) -> str | None:
+    """Return the worksheet part for the tab with the given title, or the first tab for an empty title."""
+    with zf.open('xl/workbook.xml') as f:
+        sheets = ET.parse(f).getroot().findall('main:sheets/main:sheet', XLSX_NS)
+    if not sheets:
+        return None
+    if not sheet_title:
+        chosen = sheets[0]
+    else:
+        chosen = next((sh for sh in sheets if sh.get('name') == sheet_title), None)
+        if chosen is None:
+            # Images are keyed by cell only, so another tab's photos would land on the wrong dishes
+            logger.warning(f"Tab '{sheet_title}' not found in the XLSX export, skipping images")
+            return None
+    rel = read_rels(zf, 'xl/workbook.xml').get(chosen.get(f'{{{REL_NS}}}id', ''))
+    return rel[1] if rel else None
+
+
+def images_from_xlsx(data: bytes, sheet_title: str) -> ImageMap:
+    """Extract images anchored to cells of one tab, keyed by 0-based (row, col)."""
     image_map: ImageMap = {}
-
-    with zipfile.ZipFile(fh) as zf:
-        # Check if drawings exist
-        if 'xl/drawings/drawing1.xml' not in zf.namelist():
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        sheet_part = find_sheet_part(zf, sheet_title)
+        if not sheet_part:
             return image_map
 
-        # Parse drawing relationships to map rIds to image files
-        rid_to_image: dict[str, str] = {}
-        if 'xl/drawings/_rels/drawing1.xml.rels' in zf.namelist():
-            with zf.open('xl/drawings/_rels/drawing1.xml.rels') as f:
-                rels_tree = ET.parse(f)
-                for rel in rels_tree.iter():
-                    if rel.tag.endswith('Relationship'):
-                        rid = rel.get('Id', '')
-                        target = rel.get('Target', '')
-                        if 'image' in target.lower():
-                            image_file = target.replace('../', 'xl/')
-                            rid_to_image[rid] = image_file
+        drawing_parts = [
+            target for rel_type, target in read_rels(zf, sheet_part).values()
+            if rel_type.endswith('/drawing')
+        ]
+        for drawing_part in drawing_parts:
+            if drawing_part not in zf.namelist():
+                continue
+            drawing_rels = read_rels(zf, drawing_part)
+            with zf.open(drawing_part) as f:
+                root = ET.parse(f).getroot()
 
-        # Parse drawing positions
-        ns = {
-            'xdr': 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing',
-            'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
-            'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
-        }
-
-        with zf.open('xl/drawings/drawing1.xml') as f:
-            drawing_tree = ET.parse(f)
-            root = drawing_tree.getroot()
-
-            for anchor in root.findall('.//xdr:oneCellAnchor', ns):
-                from_elem = anchor.find('xdr:from', ns)
-                if from_elem is None:
+            anchors = root.findall('xdr:oneCellAnchor', XLSX_NS) + root.findall('xdr:twoCellAnchor', XLSX_NS)
+            for anchor in anchors:
+                col_elem = anchor.find('xdr:from/xdr:col', XLSX_NS)
+                row_elem = anchor.find('xdr:from/xdr:row', XLSX_NS)
+                blip = anchor.find('.//a:blip', XLSX_NS)
+                if col_elem is None or row_elem is None or blip is None:
                     continue
 
-                col_elem = from_elem.find('xdr:col', ns)
-                row_elem = from_elem.find('xdr:row', ns)
-                if col_elem is None or row_elem is None:
+                rel = drawing_rels.get(blip.get(f'{{{REL_NS}}}embed', ''))
+                if not rel or rel[1] not in zf.namelist():
                     continue
-
-                col = int(col_elem.text or '0')
-                row = int(row_elem.text or '0')
-
-                # Find the embedded image reference
-                blip = anchor.find('.//a:blip', ns)
-                if blip is not None:
-                    rid = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed', '')
-                    if rid and rid in rid_to_image:
-                        image_file = rid_to_image[rid]
-                        if image_file in zf.namelist():
-                            with zf.open(image_file) as img_f:
-                                img_data = img_f.read()
-                                ext = image_file.rsplit('.', 1)[-1].lower()
-                                mime = {'jpg': 'jpeg', 'jpeg': 'jpeg', 'png': 'png', 'gif': 'gif'}.get(ext, 'jpeg')
-                                b64 = base64.b64encode(img_data).decode('ascii')
-                                image_map[(row, col)] = f"data:image/{mime};base64,{b64}"
+                image_file = rel[1]
+                mime = IMAGE_MIME.get(image_file.rsplit('.', 1)[-1].lower(), 'jpeg')
+                b64 = base64.b64encode(zf.read(image_file)).decode('ascii')
+                row, col = int(row_elem.text or '0'), int(col_elem.text or '0')
+                image_map[(row, col)] = f"data:image/{mime};base64,{b64}"
 
     return image_map
+
+
+def sheet_ranges(sheet_name: str) -> list[str]:
+    """Build the A1 ranges for menu rows and the title cell of a tab."""
+    if not sheet_name:
+        return ['A2:E', 'H2']
+    quoted = "'" + sheet_name.replace("'", "''") + "'"
+    return [f'{quoted}!A2:E', f'{quoted}!H2']
 
 
 def get_sheet_data(
     sheets_service: googleapiclient.discovery.Resource,
     spreadsheet_id: str,
     sheet_name: str,
-) -> tuple[str, list[RowData]]:
-    """Fetch product data and menu title from Google Sheets."""
+) -> tuple[str, str, list[RowData]]:
+    """Fetch the tab title, menu title and product rows from Google Sheets."""
     sheet_data = sheets_service.spreadsheets().get(
         spreadsheetId=spreadsheet_id,
-        ranges=[f"{sheet_name}!A2:E", f"{sheet_name}!H2"],
+        ranges=sheet_ranges(sheet_name),
         includeGridData=True,
-        fields="sheets.data.rowData.values(formattedValue)",
+        fields="sheets(properties.title,data.rowData.values(formattedValue))",
     ).execute()
 
+    sheet = sheet_data['sheets'][0]
+    sheet_title = sheet.get('properties', {}).get('title', sheet_name)
+    data = sheet.get('data', [])
+
     title_data = None
-    if len(sheet_data['sheets'][0]['data']) > 1:
-        title_range = sheet_data['sheets'][0]['data'][1]
-        if 'rowData' in title_range and title_range['rowData']:
+    if len(data) > 1:
+        title_range = data[1]
+        if title_range.get('rowData'):
             row = title_range['rowData'][0]
-            if 'values' in row and row['values']:
+            if row.get('values'):
                 title_data = row['values'][0]
 
-    menu_title = get_cell_value(title_data) if title_data else "Restaurant Menu"
+    menu_title = get_cell_value(title_data) if title_data else ""
+    menu_title = menu_title or "Restaurant Menu"
 
-    return menu_title, sheet_data['sheets'][0]['data'][0].get('rowData', [])
+    rows = data[0].get('rowData', []) if data else []
+    return sheet_title, menu_title, rows
 
 
 def process_menu_items(values: list[RowData], image_map: ImageMap) -> MenuData:
@@ -215,14 +256,16 @@ def process_menu_items(values: list[RowData], image_map: ImageMap) -> MenuData:
     menu: MenuData = {}
 
     for row_idx, row in enumerate(values):
-        if 'values' not in row or len(row['values']) < 3:
-            continue
-
-        cells = row['values']
-        title = get_cell_value(cells[0])
-        price = get_cell_value(cells[1])
-        category = get_cell_value(cells[2])
+        cells = row.get('values', [])
+        title = get_cell_value(cells[0]) if len(cells) > 0 else ""
+        price = get_cell_value(cells[1]) if len(cells) > 1 else ""
+        category = get_cell_value(cells[2]) if len(cells) > 2 else ""
         description = get_cell_value(cells[3]) if len(cells) > 3 else ""
+
+        if not title.strip() or not category.strip():
+            if any(get_cell_value(cell) for cell in cells):
+                logger.warning(f"Skipping sheet row {row_idx + 2}: it needs both a title and a category")
+            continue
 
         # Image map uses (row, col) where row is 1-indexed from XLSX (row 1 = sheet row 2)
         # Data starts at row 2, so row_idx 0 corresponds to XLSX row 1
@@ -273,7 +316,8 @@ def generate_html(
             unique_id = str(item_id_counter)
             title_text = html.escape(item['title'])
             price_text = html.escape(item['price'])
-            full_desc = html.escape(item['description'] or "")
+            description = item['description'] or ""
+            full_desc = html.escape(description)
             escaped_image_src = html.escape(item['image_src'])
 
             image_html = ''
@@ -288,17 +332,22 @@ def generate_html(
                   </div>
                 '''
 
+            # Truncate before escaping, so an entity such as &amp; is never cut in half
             truncated_desc = full_desc
             more_button_html = ""
-            if len(full_desc) > 80:
-                truncated_desc = full_desc[:80] + "..."
-                more_button_html = f' <button class="text-xs text-gray-700 hover:text-gray-900" onclick="expandItem(\'{unique_id}\')">More</button>'
+            if len(description) > 80:
+                truncated_desc = html.escape(description[:80]) + "..."
+                more_button_html = (
+                    ' <button class="text-xs text-gray-700 hover:text-gray-900'
+                    ' dark:text-gray-300 dark:hover:text-gray-100"'
+                    f' onclick="expandItem(\'{unique_id}\')">More</button>'
+                )
 
             desc_html = f'''
               <p
                 id="desc_{unique_id}"
                 data-full-description="{full_desc}"
-                class="mt-1 overflow-hidden whitespace-normal text-xs leading-5 text-gray-500"
+                class="mt-1 overflow-hidden whitespace-normal text-xs leading-5 text-gray-500 dark:text-gray-400"
               >
                 {truncated_desc}{more_button_html}
               </p>
@@ -344,7 +393,7 @@ def main() -> int:
     except FileNotFoundError:
         logger.error("Template file 'template.html' not found")
         return 1
-    except IOError as e:
+    except OSError as e:
         logger.error(f"Failed to read template: {e}")
         return 1
 
@@ -353,11 +402,11 @@ def main() -> int:
         sheets_service, drive_service = get_services(gcp_creds)
         logger.info("Google services initialized")
 
-        image_map = extract_images_from_xlsx(drive_service, spreadsheet_id)
-        logger.info(f"Extracted {len(image_map)} images from spreadsheet")
+        sheet_title, menu_title, products_data = get_sheet_data(sheets_service, spreadsheet_id, sheet_name)
+        logger.info(f"Fetched menu data from tab '{sheet_title}': '{menu_title}' with {len(products_data)} rows")
 
-        menu_title, products_data = get_sheet_data(sheets_service, spreadsheet_id, sheet_name)
-        logger.info(f"Fetched menu data: '{menu_title}' with {len(products_data)} rows")
+        image_map = images_from_xlsx(download_xlsx(drive_service, spreadsheet_id), sheet_title)
+        logger.info(f"Extracted {len(image_map)} images from the tab")
 
         # Logo is at G2 which is (row=1, col=6) in 0-indexed XLSX coordinates
         logo_src = image_map.get((1, 6), "") or load_default_logo()
@@ -374,8 +423,8 @@ def main() -> int:
 
         return 0
 
-    except Exception as e:
-        logger.exception(f"Failed to generate menu: {e}")
+    except Exception:
+        logger.exception("Failed to generate menu")
         return 1
 
 
