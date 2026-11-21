@@ -83,9 +83,10 @@ Then paste the text result into your Google Sheet (A–D) under the headers.
 
 ## Day-to-Day Usage
 
-- **Price changes**: Just edit them in the Google Sheet. Wait for the daily auto-run or push a dummy commit to trigger the workflow.
+- **Price changes**: Just edit them in the Google Sheet. Wait for the daily auto-run, or open the "Deploy Menu" workflow in the "Actions" tab and click "Run workflow" to rebuild the page now.
 - **Add new dishes**: Insert a new row in the Sheet with a Title, Price, Category, optional Description, and (optionally) “Insert → Image in cell” for Photo.
 - **Check the build logs**: In GitHub → “Actions” tab of your repo.
+- **If the page stops updating**: GitHub can disable the "Deploy Menu" workflow after 60 days of repository inactivity; while it is disabled, neither the daily run nor a push updates the page. If the workflow page in the "Actions" tab shows that it is disabled, click "Enable workflow", then "Run workflow" to rebuild the page now.
 
 That’s it—enjoy your automated menu system!
 
