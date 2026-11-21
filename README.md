@@ -13,20 +13,21 @@ After the code runs, you’ll have:
 
         Title	Price	Category	Description	Photo		Logo
 
-   in **columns A–E**.
+   in **columns A–E**. A dish needs at least a title and a category.
 2. We **insert** a logo image in **cell G2** (with "logo" in G1).
-3. We **insert** dish images in the **Photo** column’s cells.
-4. This Python script reads your Google credentials and:
+3. We put the menu title, such as the restaurant name, in **cell H2**.
+4. We **insert** dish images in the **Photo** column’s cells.
+5. This Python script reads your Google credentials and:
 
 - Fetches all rows of the sheet,
 - Downloads embedded images (logo + dish images),
 - Builds an `index.html` file with a mobile-friendly, dark-mode design,
-- Commits + deploys to GitHub Pages.
+- The workflow then deploys it to GitHub Pages.
 
 ## Step-by-Step Setup
 
 1. **Fork this Repository**  
-   On GitHub, click "Fork" to copy it into your own account.
+   On GitHub, click "Fork" to copy it into your own account. GitHub disables workflows in a fork until you enable them in its "Actions" tab.
 
 2. **Create a Google Cloud Service Account**
 
@@ -34,6 +35,7 @@ After the code runs, you’ll have:
 - Create a new project (or pick an existing one).
 - Find through search **Google Sheets API** and **Google Drive API** and enable them.
 - In “APIs & Services → Credentials,” create a **Service Account** and write down it **email**.
+- Open the service account, go to "Keys" → "Add key" → "Create new key" and choose **JSON**.
 - Download the **JSON** credentials file, open it in a text editor, and copy the entire text.  
   This is your `GCP_CREDS_JSON`.
 
@@ -44,7 +46,9 @@ After the code runs, you’ll have:
   Title	Price	Category	Description	Photo		Logo
   ```
 - In **cell G2**, go to "Insert → Image → Insert image in cell" and pick the **logo** file.
+- In **cell H2**, type the title shown at the top of the page. Without it, the page is titled "Restaurant Menu".
 - For each dish row, do the same “Insert image in cell” in the **Photo** column if you have an image.
+- Click "Share" and give the service account's email **Viewer** access, so the script can read the sheet.
 - Copy the **spreadsheet ID** from the URL: if your sheet link is  
   `https://docs.google.com/spreadsheets/d/XXXXXXXXXX/edit#gid=0`,  
   the `XXXXXXXXXX` part is your **SPREADSHEET_ID**.
@@ -57,13 +61,15 @@ After the code runs, you’ll have:
     - `SHEET_NAME` = the sheet tab name if you want to use something other than the first tab, e.g. `Sheet1`
     - `GCP_CREDS_JSON` = the entire text from your service account JSON file
 
-5. **That’s it!**
+5. **Turn on GitHub Pages**
 
-- When you push any change or at least once a day, GitHub Actions will run the `generate_menu.py` script, fetch your sheet, build `index.html`, and push it back.
+- In "Settings" → "Pages", set "Source" to **GitHub Actions**.
+
+6. **That’s it!**
+
+- When you push any change or at least once a day, GitHub Actions will run the `generate_menu.py` script, fetch your sheet, build `index.html`, and publish it to GitHub Pages.
 - Your live menu will appear at `https://<yourUserOrOrg>.github.io/<yourRepoName>/index.html` (or just `<yourRepoName>`/ if you set the default to `index.html`).
-- The workflow also creates two artifacts each time it runs:
-    1. **menu-url.txt** (the direct link),
-    2. **menu-qr.png** (a QR code pointing to the link).
+- The workflow also creates an artifact each time it runs: **menu-qr.png** (a QR code pointing to the link).
 
 ### Converting an Existing JPG or PDF Menu to a Google Sheet
 
@@ -73,7 +79,7 @@ Here’s a **ready-made prompt**:
     Please read this menu image (or PDF) and convert it into tab-separated text with columns in the exact order:
     Title	Price	Category	Description
 
-Then paste the text result into your Google Sheet (A–E) under the headers.
+Then paste the text result into your Google Sheet (A–D) under the headers.
 
 ## Day-to-Day Usage
 
